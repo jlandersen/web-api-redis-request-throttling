@@ -7,50 +7,50 @@ using StackExchange.Redis;
 
 namespace ThrottlingApi.Middleware
 {
-public class RequestThrottlingMiddleware
-{
-
-    public IConnectionMultiplexer connection;
-
-    private RequestDelegate next;
-
-    private int requestsPerMinuteThreshold;
-
-    public RequestThrottlingMiddleware(RequestDelegate next, IConnectionMultiplexer connection, int requestsPerMinuteThreshold)
+    public class RequestThrottlingMiddleware
     {
-        this.next = next;
-        this.connection = connection;
-        this.requestsPerMinuteThreshold = requestsPerMinuteThreshold;
-    }
 
-    public async Task Invoke(HttpContext context)
-    {
-        var cache = connection.GetDatabase();
+        public IConnectionMultiplexer connection;
 
-        // Get this from the context in whatever way the user supplies it
-        var consumerKey = Guid.NewGuid().ToString();
+        private RequestDelegate next;
 
-        var consumerCacheKey = $"consumer.throttle#{consumerKey}";
+        private int requestsPerMinuteThreshold;
 
-        var cacheResult = cache.HashIncrement(consumerCacheKey, 1);
-
-        if (cacheResult == 1)
+        public RequestThrottlingMiddleware(RequestDelegate next, IConnectionMultiplexer connection, int requestsPerMinuteThreshold)
         {
-            cache.KeyExpire($"consumer.throttle#{consumerKey}", TimeSpan.FromSeconds(15), CommandFlags.FireAndForget);
+            this.next = next;
+            this.connection = connection;
+            this.requestsPerMinuteThreshold = requestsPerMinuteThreshold;
         }
-        else if (cacheResult > requestsPerMinuteThreshold)
-        {
-            context.Response.StatusCode = 429;
 
-            using (var writer = new StreamWriter(context.Response.Body))
+        public async Task Invoke(HttpContext context)
+        {
+            var cache = connection.GetDatabase();
+
+            // Get this from the context in whatever way the user supplies it
+            var consumerKey = Guid.NewGuid().ToString();
+
+            var consumerCacheKey = $"consumer.throttle#{consumerKey}";
+
+            var cacheResult = cache.HashIncrement(consumerCacheKey, 1);
+
+            if (cacheResult == 1)
             {
-                await writer.WriteAsync("You are making too many requests.");
+                cache.KeyExpire($"consumer.throttle#{consumerKey}", TimeSpan.FromSeconds(15), CommandFlags.FireAndForget);
+            }
+            else if (cacheResult > requestsPerMinuteThreshold)
+            {
+                context.Response.StatusCode = 429;
+
+                using (var writer = new StreamWriter(context.Response.Body))
+                {
+                    await writer.WriteAsync("You are making too many requests.");
+                }
+
+                return;
             }
 
-            return;
+            await next(context);
         }
-
-        await next(context);
     }
-}
 }
